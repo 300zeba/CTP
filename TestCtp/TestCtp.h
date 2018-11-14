@@ -1,0 +1,43 @@
+#ifndef TESTCTP_H
+#define TESTCTP_H
+
+
+#define MSG_SIZE 5
+
+enum{
+  LOG_INITIALIZED,
+  LOG_ROOT,
+  LOG_NOT_ROOT,
+  LOG_FINISH,
+  LOG_RECEIVED_COUNT,
+  LOG_SENT_COUNT,
+  LOG_SENDING,
+  LOG_SET_RADIO_BIT,
+  LOG_SEND_TIMER,
+  LOG_SEND_FAILED,
+  LOG_SEND_SUCCESS,
+  LOG_IN_SEND,
+  LOG_RADIO_START,
+  LOG_RADIO_SEND,
+  LOG_SEND_TASK,
+  LOG_SEND_RADIO_1,
+  LOG_SEND_RADIO_2,
+  LOG_POST_TASK,
+  LOG_SEND_STEP,
+  LOG_EBUSY,
+  LOG_SEND_DONE,
+  LOG_DROP_PACKET,
+  LOG_ACKED,
+  COLLECTION_ID = 0xee,
+};
+
+typedef nx_struct DataMsg{
+	nx_uint16_t seqno;
+	nx_uint8_t data[MSG_SIZE];
+}DataMsg;
+
+
+
+
+#endif
+
