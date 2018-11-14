@@ -162,17 +162,19 @@ implementation {
   UnicastNameFreeRouting = Router;
   
   MainC.SoftwareInit -> Router;
-  Router.BeaconSend -> Estimator1.Send;
-  Router.BeaconReceive -> Estimator1.Receive;
-  Router.LinkEstimator -> Estimator1.LinkEstimator;
+  Router.BeaconSend1 -> Estimator1.Send;
+  Router.BeaconSend2 -> Estimator2.Send;
+  Router.BeaconReceive1 -> Estimator1.Receive;
+  Router.BeaconReceive2 -> Estimator2.Receive;
+  Router.LinkEstimator1 -> Estimator1.LinkEstimator;
 
   Router.CompareBit -> Estimator1.CompareBit;
 
   //Router.AMPacket -> ActiveMessageC;
   //Router.RadioControl -> ActiveMessageC;
-  Router.AMPacket -> RF231ActiveMessageC;
-  //Router.AMPacket2 -> RF212ActiveMessageC;
-  Router.RadioControl -> RF231ActiveMessageC;
+  Router.AMPacket1 -> RF231ActiveMessageC;
+  Router.AMPacket2 -> RF212ActiveMessageC;
+  //Router.RadioControl -> RF231ActiveMessageC;
   //Router.RadioControl2 -> RF212ActiveMessageC;
   Router.BeaconTimer -> RoutingBeaconTimer;
   Router.RouteTimer -> RouteUpdateTimer;
@@ -182,6 +184,7 @@ implementation {
   Router.CtpCongestion -> Forwarder;
   CtpInfo = Router;
 
+  Router.SerialLogger -> SerialLoggerC;
   
   components new TimerMilliC() as RetxmitTimer1;
   components new TimerMilliC() as RetxmitTimer2;
@@ -211,6 +214,7 @@ implementation {
   DualRadioControlC.Radio1Control -> RF231ActiveMessageC;
   DualRadioControlC.Radio2Control -> RF212ActiveMessageC;
   Forwarder.RadiosControl -> DualRadioControlC;
+  Router.RadiosControl -> DualRadioControlC;
   
   Forwarder.Radio1Ack -> RF231ActiveMessageC;
   Forwarder.Radio2Ack -> RF212ActiveMessageC;

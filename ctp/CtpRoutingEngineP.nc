@@ -114,24 +114,31 @@ generic module CtpRoutingEngineP(uint8_t routingTableSize, uint32_t minInterval,
         interface Init;
     } 
     uses {
-        interface AMSend as BeaconSend;
-        interface Receive as BeaconReceive;
-        interface LinkEstimator;
-        interface AMPacket;
-        interface SplitControl as RadioControl;
+        interface AMSend as BeaconSend1;
+        interface AMSend as BeaconSend2;
+        interface Receive as BeaconReceive1;
+        interface Receive as BeaconReceive2;
+        interface LinkEstimator as LinkEstimator1;
+        interface AMPacket as AMPacket1;
+        interface AMPacket as AMPacket2;
+        interface SplitControl as RadiosControl;
         interface Timer<TMilli> as BeaconTimer;
         interface Timer<TMilli> as RouteTimer;
         interface Random;
         interface CollectionDebug;
         interface CtpCongestion;
 
-	interface CompareBit;
+	   interface CompareBit;
+
+       interface SerialLogger;
 
     }
 }
 
 
 implementation {
+
+    uint8_t radio = 1; //Which radio to use
 
     bool ECNOff = TRUE;
 
@@ -217,14 +224,21 @@ implementation {
         state_is_root = 0;
         routeInfoInit(&routeInfo);
         routingTableInit();
-        beaconMsg = call BeaconSend.getPayload(&beaconMsgBuffer, call BeaconSend.maxPayloadLength());
+        if(radio == 1){
+            beaconMsg = call BeaconSend1.getPayload(&beaconMsgBuffer, call BeaconSend1.maxPayloadLength());
+            radio = 2;
+        }
+        else{
+            beaconMsg = call BeaconSend2.getPayload(&beaconMsgBuffer, call BeaconSend2.maxPayloadLength());
+            radio = 1;
+        }
         dbg("TreeRoutingCtl","TreeRouting initialized. (used payload:%d max payload:%d!\n", 
-              sizeof(beaconMsg), call BeaconSend.maxPayloadLength());
+              sizeof(beaconMsg), call BeaconSend1.maxPayloadLength());
         return SUCCESS;
     }
 
     command error_t StdControl.start() {
-      my_ll_addr = call AMPacket.address();
+      my_ll_addr = call AMPacket1.address();
       //start will (re)start the sending of messages
       if (!running) {
 	running = TRUE;
@@ -241,7 +255,7 @@ implementation {
         return SUCCESS;
     } 
 
-    event void RadioControl.startDone(error_t error) {
+    event void RadiosControl.startDone(error_t error) {
         radioOn = TRUE;
         dbg("TreeRoutingCtl","%s running: %d radioOn: %d\n", __FUNCTION__, running, radioOn);
         if (running) {
@@ -251,7 +265,7 @@ implementation {
         }
     } 
 
-    event void RadioControl.stopDone(error_t error) {
+    event void RadiosControl.stopDone(error_t error) {
         radioOn = FALSE;
         dbg("TreeRoutingCtl","%s running: %d radioOn: %d\n", __FUNCTION__, running, radioOn);
     }
@@ -297,7 +311,7 @@ implementation {
               continue;
             }
 
-            linkEtx = call LinkEstimator.getLinkQuality(entry->neighbor);
+            linkEtx = call LinkEstimator1.getLinkQuality(entry->neighbor);
             dbg("TreeRouting", 
                 "routingTable[%d]: neighbor: [id: %d parent: %d etx: %d retx: %d]\n",  
                 i, entry->neighbor, entry->info.parent, linkEtx, entry->info.etx);
@@ -352,9 +366,9 @@ implementation {
 
                 dbg("TreeRouting","Changed parent. from %d to %d\n", routeInfo.parent, best->neighbor);
                 call CollectionDebug.logEventDbg(NET_C_TREE_NEW_PARENT, best->neighbor, best->info.etx, minEtx);
-                call LinkEstimator.unpinNeighbor(routeInfo.parent);
-                call LinkEstimator.pinNeighbor(best->neighbor);
-                call LinkEstimator.clearDLQ(best->neighbor);
+                call LinkEstimator1.unpinNeighbor(routeInfo.parent);
+                call LinkEstimator1.pinNeighbor(best->neighbor);
+                call LinkEstimator1.clearDLQ(best->neighbor);
 
 		routeInfo.parent = best->neighbor;
 		routeInfo.etx = best->info.etx;
@@ -406,7 +420,7 @@ implementation {
             beaconMsg->etx = routeInfo.etx;
             beaconMsg->options |= CTP_OPT_PULL;
         } else {
-            beaconMsg->etx = routeInfo.etx + call LinkEstimator.getLinkQuality(routeInfo.parent);
+            beaconMsg->etx = routeInfo.etx + call LinkEstimator1.getLinkQuality(routeInfo.parent);
         }
 
         dbg("TreeRouting", "%s parent: %d etx: %d\n",
@@ -414,11 +428,20 @@ implementation {
                   beaconMsg->parent, 
                   beaconMsg->etx);
         call CollectionDebug.logEventRoute(NET_C_TREE_SENT_BEACON, beaconMsg->parent, 0, beaconMsg->etx);
-
-        eval = call BeaconSend.send(AM_BROADCAST_ADDR, 
-                                    &beaconMsgBuffer, 
-                                    sizeof(ctp_routing_header_t));
+        if(radio == 1){
+            eval = call BeaconSend1.send(AM_BROADCAST_ADDR, 
+                                        &beaconMsgBuffer, 
+                                        sizeof(ctp_routing_header_t));
+            radio = 2;
+        }
+        else{
+            eval = call BeaconSend2.send(AM_BROADCAST_ADDR, 
+                                        &beaconMsgBuffer, 
+                                        sizeof(ctp_routing_header_t));
+            radio = 1;
+        }
         if (eval == SUCCESS) {
+            call SerialLogger.log(LOG_SENT_BEACON,radio);
             sending = TRUE;
         } else if (eval == EOFF) {
             radioOn = FALSE;
@@ -426,7 +449,15 @@ implementation {
         }
     }
 
-    event void BeaconSend.sendDone(message_t* msg, error_t error) {
+    event void BeaconSend1.sendDone(message_t* msg, error_t error) {
+        if ((msg != &beaconMsgBuffer) || !sending) {
+            //something smells bad around here
+            return;
+        }
+        sending = FALSE;
+    }
+
+    event void BeaconSend2.sendDone(message_t* msg, error_t error) {
         if ((msg != &beaconMsgBuffer) || !sending) {
             //something smells bad around here
             return;
@@ -456,13 +487,13 @@ implementation {
 
 
     ctp_routing_header_t* getHeader(message_t* ONE m) {
-      return (ctp_routing_header_t*)call BeaconSend.getPayload(m, call BeaconSend.maxPayloadLength());
+      return (ctp_routing_header_t*)call BeaconSend1.getPayload(m, call BeaconSend1.maxPayloadLength());
     }
     
     
     /* Handle the receiving of beacon messages from the neighbors. We update the
      * table, but wait for the next route update to choose a new parent */
-    event message_t* BeaconReceive.receive(message_t* msg, void* payload, uint8_t len) {
+    event message_t* BeaconReceive1.receive(message_t* msg, void* payload, uint8_t len) {
         am_addr_t from;
         ctp_routing_header_t* rcvBeacon;
         bool congested;
@@ -476,9 +507,9 @@ implementation {
               
           return msg;
         }
-        
+        call SerialLogger.log(LOG_RECEIVED_BEACON,1);
         //need to get the am_addr_t of the source
-        from = call AMPacket.source(msg);
+        from = call AMPacket1.source(msg);
         rcvBeacon = (ctp_routing_header_t*)payload;
 
         congested = call CtpRoutingPacket.getOption(msg, CTP_OPT_ECN);
@@ -494,8 +525,55 @@ implementation {
              * estimator table and pin the node. */
             if (rcvBeacon->etx == 0) {
                 dbg("TreeRouting","from a root, inserting if not in table\n");
-                call LinkEstimator.insertNeighbor(from);
-                call LinkEstimator.pinNeighbor(from);
+                call LinkEstimator1.insertNeighbor(from);
+                call LinkEstimator1.pinNeighbor(from);
+            }
+            //TODO: also, if better than my current parent's path etx, insert
+
+            routingTableUpdateEntry(from, rcvBeacon->parent, rcvBeacon->etx);
+            call CtpInfo.setNeighborCongested(from, congested);
+        }
+
+        if (call CtpRoutingPacket.getOption(msg, CTP_OPT_PULL)) {
+              resetInterval();
+        }
+        return msg;
+    }
+
+    event message_t* BeaconReceive2.receive(message_t* msg, void* payload, uint8_t len) {
+        am_addr_t from;
+        ctp_routing_header_t* rcvBeacon;
+        bool congested;
+
+        // Received a beacon, but it's not from us.
+        if (len != sizeof(ctp_routing_header_t)) {
+          dbg("LITest", "%s, received beacon of size %hhu, expected %i\n",
+                     __FUNCTION__, 
+                     len,
+                     (int)sizeof(ctp_routing_header_t));
+              
+          return msg;
+        }
+        call SerialLogger.log(LOG_RECEIVED_BEACON,2);
+        //need to get the am_addr_t of the source
+        from = call AMPacket2.source(msg);
+        rcvBeacon = (ctp_routing_header_t*)payload;
+
+        congested = call CtpRoutingPacket.getOption(msg, CTP_OPT_ECN);
+
+        dbg("TreeRouting","%s from: %d  [ parent: %d etx: %d]\n",
+            __FUNCTION__, from, 
+            rcvBeacon->parent, rcvBeacon->etx);
+
+        //update neighbor table
+        if (rcvBeacon->parent != INVALID_ADDR) {
+
+            /* If this node is a root, request a forced insert in the link
+             * estimator table and pin the node. */
+            if (rcvBeacon->etx == 0) {
+                dbg("TreeRouting","from a root, inserting if not in table\n");
+                call LinkEstimator1.insertNeighbor(from);
+                call LinkEstimator1.pinNeighbor(from);
             }
             //TODO: also, if better than my current parent's path etx, insert
 
@@ -512,7 +590,7 @@ implementation {
 
     /* Signals that a neighbor is no longer reachable. need special care if
      * that neighbor is our parent */
-    event void LinkEstimator.evicted(am_addr_t neighbor) {
+    event void LinkEstimator1.evicted(am_addr_t neighbor) {
         routingTableEvict(neighbor);
         dbg("TreeRouting","%s\n",__FUNCTION__);
         if (routeInfo.parent == neighbor) {
@@ -549,7 +627,7 @@ implementation {
 	if (state_is_root == 1) {
 	  *etx = 0;
 	} else {
-	  *etx = routeInfo.etx + call LinkEstimator.getLinkQuality(routeInfo.parent);
+	  *etx = routeInfo.etx + call LinkEstimator1.getLinkQuality(routeInfo.parent);
 	}
         return SUCCESS;
     }
@@ -649,7 +727,7 @@ implementation {
         routing_table_entry* entry;
         ctp_routing_header_t* rcvBeacon;
 
-        if ((call AMPacket.type(msg) != AM_CTP_ROUTING) ||
+        if ((call AMPacket1.type(msg) != AM_CTP_ROUTING) ||
             (len != sizeof(ctp_routing_header_t))) 
             return FALSE;
 
@@ -686,7 +764,7 @@ implementation {
      * The table is simple: 
      *   - not fragmented (all entries in 0..routingTableActive)
      *   - not ordered
-     *   - no replacement: eviction follows the LinkEstimator table
+     *   - no replacement: eviction follows the LinkEstimator1 table
      */
 
     void routingTableInit() {
@@ -710,7 +788,7 @@ implementation {
     error_t routingTableUpdateEntry(am_addr_t from, am_addr_t parent, uint16_t etx)    {
         uint8_t idx;
         uint16_t  linkEtx;
-        linkEtx = call LinkEstimator.getLinkQuality(from);
+        linkEtx = call LinkEstimator1.getLinkQuality(from);
 
         idx = routingTableFind(from);
         if (idx == routingTableSize) {
@@ -814,10 +892,10 @@ implementation {
       return routingTableActive;
     }
     command uint16_t CtpInfo.getNeighborLinkQuality(uint8_t n) {
-      return (n < routingTableActive)? call LinkEstimator.getLinkQuality(routingTable[n].neighbor):0xffff;
+      return (n < routingTableActive)? call LinkEstimator1.getLinkQuality(routingTable[n].neighbor):0xffff;
     }
     command uint16_t CtpInfo.getNeighborRouteQuality(uint8_t n) {
-      return (n < routingTableActive)? call LinkEstimator.getLinkQuality(routingTable[n].neighbor) + routingTable[n].info.etx:0xfffff;
+      return (n < routingTableActive)? call LinkEstimator1.getLinkQuality(routingTable[n].neighbor) + routingTable[n].info.etx:0xfffff;
     }
     command am_addr_t CtpInfo.getNeighborAddr(uint8_t n) {
       return (n < routingTableActive)? routingTable[n].neighbor:AM_BROADCAST_ADDR;

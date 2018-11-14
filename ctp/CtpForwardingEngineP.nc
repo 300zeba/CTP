@@ -323,11 +323,15 @@ implementation {
     if(radio == 1){
       call SerialLogger.log(LOG_SET_RADIO_BIT,1);
       dbg("Forwarder", "%s: sending packet from client %hhu: %x, len %hhu\n", __FUNCTION__, client, msg, len);
-      if (!hasState(ROUTING_ON)) {return EOFF;}
-      call SerialLogger.log(LOG_SEND_STEP,1);
-      if (len > call Send.maxPayloadLength[client]()) {return ESIZE;}
+      if (!hasState(ROUTING_ON)) {
+        call SerialLogger.log(LOG_ROUTING_OFF,1);
+        return EOFF;
+      }
+      if (len > call Send.maxPayloadLength[client]()) {
+        call SerialLogger.log(LOG_PACKET_TOO_BIG,1);
+        return ESIZE;
+      }
       radio = 2;
-      call SerialLogger.log(LOG_SEND_STEP,1);
     
       call Packet.setPayloadLength(msg, len);
       hdr = getHeader(msg);
@@ -341,7 +345,6 @@ implementation {
         call SerialLogger.log(LOG_EBUSY,1);
         return EBUSY;
       }
-      call SerialLogger.log(LOG_SEND_STEP,1);
       qe = clientPtrs[client];
       qe->msg = msg;
       qe->client = client;
@@ -354,7 +357,6 @@ implementation {
           call SerialLogger.log(LOG_POST_TASK,1);
        }
        clientPtrs[client] = NULL;
-       call SerialLogger.log(LOG_SEND_STEP,1);
         return SUCCESS;
       }
      else {
@@ -372,11 +374,17 @@ implementation {
      else{
       call SerialLogger.log(LOG_SET_RADIO_BIT,2);
       dbg("Forwarder", "%s: sending packet from client %hhu: %x, len %hhu\n", __FUNCTION__, client, msg, len);
-      if (!hasState(ROUTING_ON)) {return EOFF;}
-      call SerialLogger.log(LOG_SEND_STEP,2);
-      if (len > call Send.maxPayloadLength[client]()) {return ESIZE;}
+      if (!hasState(ROUTING_ON)) {
+        call SerialLogger.log(LOG_ROUTING_OFF,2);
+        return EOFF;
+      }
+      
+      if (len > call Send.maxPayloadLength[client]()) {
+        call SerialLogger.log(LOG_PACKET_TOO_BIG,2);
+        return ESIZE;
+      }
       radio = 1;
-      call SerialLogger.log(LOG_SEND_STEP,2);
+      
       call Packet.setPayloadLength(msg, len);
       hdr = getHeader(msg);
       hdr->origin = TOS_NODE_ID;
@@ -389,7 +397,6 @@ implementation {
         call SerialLogger.log(LOG_EBUSY,2);
         return EBUSY;
       }
-      call SerialLogger.log(LOG_SEND_STEP,2);
 
       qe = clientPtrs[client];
       qe->msg = msg;
@@ -403,7 +410,7 @@ implementation {
           call SerialLogger.log(LOG_POST_TASK,2);
        }
        clientPtrs[client] = NULL;
-       call SerialLogger.log(LOG_SEND_STEP,2);
+
         return SUCCESS;
       }
      else {
@@ -505,7 +512,7 @@ implementation {
       
       //Differentiate between radios
       if(call CtpPacket.getRadio(qe->msg) == 1){ //Uses radio 1
-        call SerialLogger.log(LOG_SEND_RADIO_1,0);
+        call SerialLogger.log(LOG_SEND_TASK,1);
         if(hasState(SENDING1)){
           call CollectionDebug.logEvent(NET_C_FE_SENDQUEUE_EMPTY);
           return;
@@ -540,6 +547,7 @@ implementation {
   	     call CtpPacket.setOption(qe->msg, CTP_OPT_ECN); 
   	     clearState(QUEUE_CONGESTED);
   	     }
+         call SerialLogger.log(LOG_SEND_RADIO,1);
   	
   	     subsendResult = call SubSend1.send(dest, qe->msg, payloadLen);
   	     if (subsendResult == SUCCESS) {
@@ -554,18 +562,18 @@ implementation {
   	       dbg("Forwarder", "%s: subsend failed from ESIZE: truncate packet.\n", __FUNCTION__);
   	       call Packet.setPayloadLength(qe->msg, call Packet.maxPayloadLength());
   	       post sendTask();
-           call SerialLogger.log(LOG_SEND_FAILED,11);
+           call SerialLogger.log(LOG_PACKET_TOO_BIG,1);
   	       call CollectionDebug.logEvent(NET_C_FE_SUBSEND_SIZE);
   	     }
   	     else {
-          call SerialLogger.log(LOG_SEND_FAILED,12);
+          call SerialLogger.log(LOG_SEND_FAILED,1);
   	      dbg("Forwarder", "%s: subsend failed from %i\n", __FUNCTION__, (int)subsendResult);
   	     }
         }
 
       }
       else{ //Uses radio 2
-        call SerialLogger.log(LOG_SEND_RADIO_2,0);
+        call SerialLogger.log(LOG_SEND_TASK,2);
         if(hasState(SENDING2)){
           call CollectionDebug.logEvent(NET_C_FE_SENDQUEUE_EMPTY);
           return;
@@ -599,6 +607,7 @@ implementation {
          call CtpPacket.setOption(qe->msg, CTP_OPT_ECN); 
          clearState(QUEUE_CONGESTED);
          }
+         call SerialLogger.log(LOG_SEND_RADIO,2);
     
          subsendResult = call SubSend2.send(dest, qe->msg, payloadLen);
          if (subsendResult == SUCCESS) {
@@ -613,11 +622,11 @@ implementation {
            dbg("Forwarder", "%s: subsend failed from ESIZE: truncate packet.\n", __FUNCTION__);
            call Packet.setPayloadLength(qe->msg, call Packet.maxPayloadLength());
            post sendTask();
-           call SerialLogger.log(LOG_SEND_FAILED,21);
+           call SerialLogger.log(LOG_PACKET_TOO_BIG,2);
            call CollectionDebug.logEvent(NET_C_FE_SUBSEND_SIZE);
          }
          else {
-          call SerialLogger.log(LOG_SEND_FAILED,22);
+          call SerialLogger.log(LOG_SEND_FAILED,2);
           dbg("Forwarder", "%s: subsend failed from %i\n", __FUNCTION__, (int)subsendResult);
          }
         }
@@ -684,7 +693,7 @@ implementation {
   event void SubSend1.sendDone(message_t* msg, error_t error) {
     fe_queue_entry_t *qe = call SendQueue.head();
     dbg("Forwarder", "%s to %hu and %hhu\n", __FUNCTION__, call AMPacket1.destination(msg), error);
-    call SerialLogger.log(LOG_SEND_DONE,1);
+   
     if (error != SUCCESS) {
       /* The radio wasn't able to send the packet: retransmit it. */
       dbg("Forwarder", "%s: send failed\n", __FUNCTION__);
@@ -693,10 +702,11 @@ implementation {
 				       call CollectionPacket.getOrigin(msg), 
 				       call AMPacket1.destination(msg));
       startRetxmitTimer1(SENDDONE_FAIL_WINDOW, SENDDONE_FAIL_OFFSET);
+      call SerialLogger.log(LOG_NEED_RETRANSMISSION,1);
     }
     else if (hasState(ACK_PENDING1) && !call Radio1Ack.wasAcked(msg)) {
       /* No ack: if countdown is not 0, retransmit, else drop the packet. */
-      call SerialLogger.log(LOG_DROP_PACKET,1);
+      
       call LinkEstimator1.txNoAck(call AMPacket1.destination(msg));
       call CtpInfo.recomputeRoutes();
       if (--qe->retries) { 
@@ -706,6 +716,7 @@ implementation {
 					 call CollectionPacket.getOrigin(msg), 
                                          call AMPacket1.destination(msg));
         startRetxmitTimer1(SENDDONE_NOACK_WINDOW, SENDDONE_NOACK_OFFSET);
+        call SerialLogger.log(LOG_NEED_RETRANSMISSION,1);
       } else {
 	/* Hit max retransmit threshold: drop the packet. */
   call SerialLogger.log(LOG_DROP_PACKET,1);
@@ -741,6 +752,7 @@ implementation {
                call CollectionPacket.getOrigin(msg), 
                call AMPacket2.destination(msg));
       startRetxmitTimer2(SENDDONE_FAIL_WINDOW, SENDDONE_FAIL_OFFSET);
+      call SerialLogger.log(LOG_NEED_RETRANSMISSION,2);
     }
     else if (hasState(ACK_PENDING2) && !call Radio2Ack.wasAcked(msg)) {
       /* No ack: if countdown is not 0, retransmit, else drop the packet. */
@@ -753,12 +765,13 @@ implementation {
            call CollectionPacket.getOrigin(msg), 
                                          call AMPacket2.destination(msg));
         startRetxmitTimer2(SENDDONE_NOACK_WINDOW, SENDDONE_NOACK_OFFSET);
+        call SerialLogger.log(LOG_NEED_RETRANSMISSION,2);
       } else {
   /* Hit max retransmit threshold: drop the packet. */
   call SendQueue.dequeue();
         clearState(SENDING2);
         startRetxmitTimer2(SENDDONE_OK_WINDOW, SENDDONE_OK_OFFSET);
-  
+        call SerialLogger.log(LOG_DROP_PACKET,2);
   packetComplete(qe, msg, FALSE);
       }
     }
@@ -766,6 +779,7 @@ implementation {
       /* Packet was acknowledged. Updated the link estimator,
    free the buffer (pool or sendDone), start timer to
    send next packet. */
+   call SerialLogger.log(LOG_ACKED,2);
       call SendQueue.dequeue();
       clearState(SENDING2);
       startRetxmitTimer2(SENDDONE_OK_WINDOW, SENDDONE_OK_OFFSET);
@@ -959,7 +973,7 @@ implementation {
     fe_queue_entry_t* qe;
     uint8_t i, thl;
 
-
+    call SerialLogger.log(LOG_RECEIVED_PACKET,1);
     collectid = call CtpPacket.getType(msg);
 
     // Update the THL here, since it has lived another hop, and so
@@ -1012,6 +1026,7 @@ implementation {
 						  call Packet.payloadLength(msg)))
       return msg;
     else {
+      call SerialLogger.log(LOG_FORWARD1_FROM,getHeader(msg)->origin);
       dbg("Route", "Forwarding packet from %hu.\n", getHeader(msg)->origin);
       return forward1(msg);
     }
@@ -1023,7 +1038,7 @@ implementation {
     bool duplicate = FALSE;
     fe_queue_entry_t* qe;
     uint8_t i, thl;
-
+    call SerialLogger.log(LOG_RECEIVED_PACKET,2);
 
     collectid = call CtpPacket.getType(msg);
 
@@ -1077,6 +1092,7 @@ implementation {
               call Packet.payloadLength(msg)))
       return msg;
     else {
+      call SerialLogger.log(LOG_FORWARD2_FROM,getHeader(msg)->origin);
       dbg("Route", "Forwarding packet from %hu.\n", getHeader(msg)->origin);
       return forward2(msg);
     }
